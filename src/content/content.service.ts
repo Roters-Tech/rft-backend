@@ -32,7 +32,10 @@ export class ContentService {
       downloadUrl = await this.supabaseStorage.uploadFile(file);
     } else if (!downloadUrl) {
       const port = process.env.PORT || 3006;
-      downloadUrl = `http://localhost:${port}/uploads/sample_past_question.pdf`;
+      const baseUrl =
+        process.env.APP_URL ||
+        (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://localhost:${port}`);
+      downloadUrl = `${baseUrl}/uploads/sample_past_question.pdf`;
     }
 
     return this.prisma.content.create({

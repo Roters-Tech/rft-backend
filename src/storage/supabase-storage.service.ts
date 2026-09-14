@@ -92,8 +92,11 @@ export class SupabaseStorageService {
     const localFilePath = path.join(this.uploadsDir, fileName);
     fs.writeFileSync(localFilePath, fileBuffer);
     const port = process.env.PORT || 3006;
-    const localUrl = `http://localhost:${port}/uploads/${fileName}`;
-    this.logger.log(`Saved file locally: ${localUrl}`);
+    const baseUrl =
+      process.env.APP_URL ||
+      (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://localhost:${port}`);
+    const localUrl = `${baseUrl}/uploads/${fileName}`;
+    this.logger.log(`Saved file: ${localUrl}`);
     return localUrl;
   }
 }
