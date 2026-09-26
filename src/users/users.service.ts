@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { SupabaseStorageService } from '../storage/supabase-storage.service';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
@@ -9,6 +10,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly supabaseStorage: SupabaseStorageService,
   ) {}
 
   async createUser(dto: { fullName: string; email: string; schoolId?: string; departmentId?: string; phoneNumber?: string; courseIds?: string[]; role?: Role }) {
@@ -87,13 +89,6 @@ export class UsersService {
       schoolName,
     );
 
-    console.log(`\n======================================================`);
-    console.log(`🔑 NEW ${user.role} ONBOARDED SUCCESSFULLY!`);
-    console.log(`👤 Name: ${user.fullName}`);
-    console.log(`📧 Email: ${user.email}`);
-    console.log(`🔑 Temporary Password: ${tempPassword}`);
-    console.log(`======================================================\n`);
-
     return {
       message: 'Account created successfully. Credentials sent via email.',
       tempPassword,
@@ -154,7 +149,7 @@ export class UsersService {
     });
   }
 
-  async updateUser(id: string, dto: { fullName?: string; email?: string; status?: string; schoolId?: string; courseIds?: string[] }) {
+  async updateUser(id: string, dto: { fullName?: string; email?: string; status?: string; schoolId?: string; courseIds?: string[]; bio?: string; title?: string; phoneNumber?: string; certifications?: any; achievements?: any }) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
 
@@ -162,7 +157,17 @@ export class UsersService {
     if (dto.fullName) data.fullName = dto.fullName.trim();
     if (dto.email) data.email = dto.email.trim().toLowerCase();
     if (dto.status) data.status = dto.status;
+    if (dto.phoneNumber !== undefined) data.phoneNumber = dto.phoneNumber ? dto.phoneNumber.trim() : null;
+    if (dto.bio !== undefined) data.bio = dto.bio ? dto.bio.trim() : null;
+    if (dto.title !== undefined) data.title = dto.title ? dto.title.trim() : null;
     if (dto.schoolId !== undefined) data.schoolId = dto.schoolId || null;
+
+    if (dto.certifications !== undefined) {
+      data.certifications = typeof dto.certifications === 'string' ? JSON.parse(dto.certifications) : dto.certifications;
+    }
+    if (dto.achievements !== undefined) {
+      data.achievements = typeof dto.achievements === 'string' ? JSON.parse(dto.achievements) : dto.achievements;
+    }
 
     if (dto.courseIds && Array.isArray(dto.courseIds)) {
       data.taughtCourses = {
@@ -185,7 +190,92 @@ export class UsersService {
     });
   }
 
+  async getProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        school: { select: { id: true, name: true, acronym: true } },
+        department: { select: { id: true, name: true, faculty: { select: { id: true, name: true } } } },
+        taughtCourses: { select: { id: true, code: true, name: true, unit: true, semester: true } },
+      },
+    });
+    if (!user) throw new NotFoundException('User not found');
 
+    const [pastQuestionsCount, materialsCount, totalContentCount] = await Promise.all([
+      this.prisma.content.count({
+        where: { uploaderId: userId, type: 'past_question' },
+      }),
+      this.prisma.content.count({
+        where: { uploaderId: userId, type: { not: 'past_question' } },
+      }),
+      this.prisma.content.count({
+        where: { uploaderId: userId },
+      }),
+    ]);
+
+    return {
+      id: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      phoneNumber: user.phoneNumber,
+      role: user.role,
+      status: user.status,
+      matricNumber: user.matricNumber,
+      level: user.level,
+      profileImageUrl: user.profileImageUrl,
+      bio: user.bio,
+      title: user.title,
+      certifications: user.certifications || [],
+      achievements: user.achievements || [],
+      school: user.school,
+      department: user.department,
+      taughtCourses: user.taughtCourses,
+      pastQuestionsCount,
+      materialsCount,
+      totalContentCount,
+      createdAt: user.createdAt,
+    };
+  }
+
+  async updateProfile(userId: string, dto: any, file?: Express.Multer.File) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    let profileImageUrl = dto.profileImageUrl !== undefined ? dto.profileImageUrl : undefined;
+    if (file) {
+      profileImageUrl = await this.supabaseStorage.uploadFile(file);
+    }
+
+    const data: any = {};
+    if (dto.fullName) data.fullName = dto.fullName.trim();
+    if (dto.phoneNumber !== undefined) data.phoneNumber = dto.phoneNumber ? dto.phoneNumber.trim() : null;
+    if (dto.bio !== undefined) data.bio = dto.bio ? dto.bio.trim() : null;
+    if (dto.title !== undefined) data.title = dto.title ? dto.title.trim() : null;
+    if (profileImageUrl !== undefined) data.profileImageUrl = profileImageUrl;
+
+    if (dto.certifications !== undefined) {
+      try {
+        data.certifications = typeof dto.certifications === 'string' ? JSON.parse(dto.certifications) : dto.certifications;
+      } catch {
+        data.certifications = dto.certifications;
+      }
+    }
+
+    if (dto.achievements !== undefined) {
+      try {
+        data.achievements = typeof dto.achievements === 'string' ? JSON.parse(dto.achievements) : dto.achievements;
+      } catch {
+        data.achievements = dto.achievements;
+      }
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data,
+    });
+
+    return this.getProfile(userId);
+  }
 
   async findAll(query: { role?: Role; schoolId?: string; departmentId?: string; search?: string }) {
     const { role, schoolId, departmentId, search } = query;
@@ -214,8 +304,14 @@ export class UsersService {
         status: true,
         matricNumber: true,
         level: true,
+        profileImageUrl: true,
+        bio: true,
+        title: true,
+        certifications: true,
+        achievements: true,
         school: { select: { id: true, name: true, acronym: true } },
         department: { select: { id: true, name: true } },
+        taughtCourses: { select: { id: true, code: true, name: true } },
         classRepAssignments: { select: { id: true, courseId: true, active: true } },
         createdAt: true,
       },
@@ -238,8 +334,14 @@ export class UsersService {
           status: true,
           matricNumber: true,
           level: true,
+          profileImageUrl: true,
+          bio: true,
+          title: true,
+          certifications: true,
+          achievements: true,
           school: { select: { id: true, name: true, acronym: true } },
           department: { select: { id: true, name: true } },
+          taughtCourses: { select: { id: true, code: true, name: true } },
           classRepAssignments: { select: { id: true, courseId: true, active: true } },
           createdAt: true,
         },
@@ -247,30 +349,29 @@ export class UsersService {
       });
     }
 
-    return users;
+    // Enrich lecturers with past questions and materials count
+    const enrichedUsers = await Promise.all(
+      users.map(async (u) => {
+        if (u.role === Role.LECTURER) {
+          const [pastQuestionsCount, materialsCount] = await Promise.all([
+            this.prisma.content.count({ where: { uploaderId: u.id, type: 'past_question' } }),
+            this.prisma.content.count({ where: { uploaderId: u.id, type: { not: 'past_question' } } }),
+          ]);
+          return {
+            ...u,
+            pastQuestionsCount,
+            materialsCount,
+          };
+        }
+        return u;
+      })
+    );
+
+    return enrichedUsers;
   }
 
-
   async findOne(id: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phoneNumber: true,
-        role: true,
-        status: true,
-        matricNumber: true,
-        level: true,
-        school: { select: { id: true, name: true, acronym: true } },
-        department: { select: { id: true, name: true } },
-        createdAt: true,
-      },
-    });
-
-    if (!user) throw new NotFoundException('User not found');
-    return user;
+    return this.getProfile(id);
   }
 
   async updateUserStatus(id: string, status: string) {
@@ -287,6 +388,16 @@ export class UsersService {
       data: { pushToken },
       select: { id: true, email: true, pushToken: true },
     });
+  }
+
+  async uploadDocument(file: Express.Multer.File) {
+    const url = await this.supabaseStorage.uploadFile(file);
+    return {
+      url,
+      fileName: file.originalname,
+      size: file.size,
+      mimeType: file.mimetype,
+    };
   }
 
   async removeUser(id: string) {

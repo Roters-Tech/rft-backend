@@ -81,6 +81,10 @@ model User {
   profileImageUrl String?
   matricNumber   String?      @unique
   pushToken      String?
+  bio            String?
+  title          String?
+  certifications Json?
+  achievements   Json?
 
   schoolId       String?
   departmentId   String?

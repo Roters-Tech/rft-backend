@@ -28,7 +28,7 @@
     "id": "plan-enterprise",
     "name": "Enterprise Plan",
     "price": 1499000,
-    "maxStudents": 4000,
+    "maxStudents": 100000,
     "features": [
       "Multi-Campus Hierarchy",
       "Dedicated Success Manager",

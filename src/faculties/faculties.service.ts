@@ -9,11 +9,24 @@ export class FacultiesService {
     if (!data.name || !data.schoolId) {
       throw new BadRequestException('Faculty name and schoolId are required.');
     }
+
+    const trimmedName = data.name.trim();
+    const existing = await this.prisma.faculty.findFirst({
+      where: {
+        schoolId: data.schoolId,
+        name: { equals: trimmedName, mode: 'insensitive' },
+      },
+    });
+
+    if (existing) {
+      throw new BadRequestException(`Faculty "${trimmedName}" already exists in your institution.`);
+    }
+
     return this.prisma.faculty.create({
       data: {
-        name: data.name.trim(),
+        name: trimmedName,
         schoolId: data.schoolId,
-        deanName: data.deanName,
+        deanName: data.deanName?.trim() || null,
         capacityTarget: data.capacityTarget ? Number(data.capacityTarget) : null,
         status: 'active',
       },
@@ -67,9 +80,22 @@ export class FacultiesService {
     if (!data.name || !data.facultyId || !data.schoolId) {
       throw new BadRequestException('Department name, facultyId, and schoolId are required.');
     }
+
+    const trimmedName = data.name.trim();
+    const existing = await this.prisma.department.findFirst({
+      where: {
+        facultyId: data.facultyId,
+        name: { equals: trimmedName, mode: 'insensitive' },
+      },
+    });
+
+    if (existing) {
+      throw new BadRequestException(`Department "${trimmedName}" already exists in this faculty.`);
+    }
+
     return this.prisma.department.create({
       data: {
-        name: data.name.trim(),
+        name: trimmedName,
         facultyId: data.facultyId,
         schoolId: data.schoolId,
       },

@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SupabaseStorageService } from '../storage/supabase-storage.service';
+import { sendExpoPushNotification } from '../common/push-notification.helper';
 
 @Injectable()
 export class AnnouncementsService {
@@ -9,13 +10,42 @@ export class AnnouncementsService {
     private readonly supabaseStorage: SupabaseStorageService,
   ) {}
 
+  private checkManagePermission(announcement: any, user: any) {
+    if (!user) return;
+    const userId = user.userId || user.id;
+    const role = user.role;
+
+    if (role === 'SUPER_ADMIN') {
+      return;
+    }
+
+    if (role === 'SCHOOL_ADMIN') {
+      if (announcement.author?.role === 'SUPER_ADMIN') {
+        throw new ForbiddenException('School admins cannot modify platform announcements');
+      }
+      if (announcement.schoolId && user.schoolId && announcement.schoolId !== user.schoolId) {
+        throw new ForbiddenException('You can only modify announcements within your institution');
+      }
+      return;
+    }
+
+    if (role === 'LECTURER') {
+      if (announcement.authorId !== userId) {
+        throw new ForbiddenException('Lecturers can only modify their own announcements');
+      }
+      return;
+    }
+
+    throw new ForbiddenException('Unauthorized to modify this announcement');
+  }
+
   async create(data: any, authorId: string, file?: Express.Multer.File) {
     let imageUrl = data.imageUrl || null;
     if (file) {
       imageUrl = await this.supabaseStorage.uploadFile(file);
     }
 
-    return this.prisma.announcement.create({
+    const created = await this.prisma.announcement.create({
       data: {
         title: data.title || 'Announcement',
         message: data.message || data.content || '',
@@ -32,6 +62,43 @@ export class AnnouncementsService {
         school: true,
       },
     });
+
+    // Asynchronously dispatch Expo push notifications
+    (async () => {
+      try {
+        let userFilter: any = { pushToken: { not: null } };
+        if (data.schoolId && data.schoolId.trim() !== '') {
+          userFilter.schoolId = data.schoolId;
+        }
+
+        const usersWithToken = await this.prisma.user.findMany({
+          where: userFilter,
+          select: { pushToken: true },
+        });
+
+        const tokens = usersWithToken
+          .map((u) => u.pushToken)
+          .filter((t): t is string => Boolean(t));
+
+        if (tokens.length > 0) {
+          const previewMessage =
+            data.message && data.message.length > 120
+              ? `${data.message.slice(0, 117)}...`
+              : data.message || 'New announcement available';
+
+          await sendExpoPushNotification(
+            tokens,
+            data.title || 'Campus Announcement',
+            previewMessage,
+            { type: 'announcement', id: created.id, title: data.title }
+          );
+        }
+      } catch (err) {
+        console.warn('Failed to dispatch announcement push notifications:', err);
+      }
+    })();
+
+    return created;
   }
 
   async findAll(user?: any) {
@@ -92,6 +159,7 @@ export class AnnouncementsService {
         author: a.author?.fullName || 'Campus Staff',
         authorName: a.author?.fullName || 'Campus Staff',
         authorRole: a.author?.role,
+        authorId: a.authorId,
         courseId: a.courseId,
         schoolId: a.schoolId,
         createdAt: a.createdAt.toISOString(),
@@ -140,7 +208,9 @@ export class AnnouncementsService {
       author: announcement.author?.fullName || 'Campus Staff',
       authorName: announcement.author?.fullName || 'Campus Staff',
       authorRole: announcement.author?.role,
+      authorId: announcement.authorId,
       courseId: announcement.courseId,
+      schoolId: announcement.schoolId,
       createdAt: announcement.createdAt.toISOString(),
       likes: likesCount,
       hasLiked,
@@ -148,11 +218,54 @@ export class AnnouncementsService {
     };
   }
 
-  async update(id: string, data: any) {
-    return this.prisma.announcement.update({ where: { id }, data });
+  async update(id: string, data: any, file?: Express.Multer.File, user?: any) {
+    const existing = await this.prisma.announcement.findUnique({
+      where: { id },
+      include: { author: { select: { id: true, role: true, schoolId: true } } },
+    });
+    if (!existing) throw new NotFoundException('Announcement not found');
+
+    this.checkManagePermission(existing, user);
+
+    let imageUrl = data.imageUrl !== undefined ? data.imageUrl : undefined;
+    if (file) {
+      imageUrl = await this.supabaseStorage.uploadFile(file);
+    }
+    const updateData: any = {};
+    if (data.title !== undefined) updateData.title = data.title;
+    if (data.message !== undefined || data.content !== undefined) {
+      updateData.message = data.message || data.content || '';
+    }
+    if (data.audienceType !== undefined) updateData.audienceType = data.audienceType;
+    if (data.type !== undefined) updateData.type = data.type;
+    if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
+    if (data.courseId !== undefined) {
+      updateData.courseId = data.courseId && data.courseId.trim() !== '' ? data.courseId : null;
+    }
+    if (data.schoolId !== undefined) {
+      updateData.schoolId = data.schoolId && data.schoolId.trim() !== '' ? data.schoolId : null;
+    }
+
+    return this.prisma.announcement.update({
+      where: { id },
+      data: updateData,
+      include: {
+        author: { select: { fullName: true, role: true } },
+        course: true,
+        school: true,
+      },
+    });
   }
 
-  async remove(id: string) {
+  async remove(id: string, user?: any) {
+    const existing = await this.prisma.announcement.findUnique({
+      where: { id },
+      include: { author: { select: { id: true, role: true, schoolId: true } } },
+    });
+    if (!existing) throw new NotFoundException('Announcement not found');
+
+    this.checkManagePermission(existing, user);
+
     return this.prisma.announcement.delete({ where: { id } });
   }
 

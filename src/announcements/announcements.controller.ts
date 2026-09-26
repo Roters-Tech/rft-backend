@@ -65,14 +65,27 @@ export class AnnouncementsController {
   @UseGuards(RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.SCHOOL_ADMIN, Role.LECTURER)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() data: any) {
-    return this.announcementsService.update(id, data);
+  @UseInterceptors(FileInterceptor('image', {
+    fileFilter: (req, file, callback) => {
+      if (!file.mimetype.match(/\/(jpg|jpeg|png|gif)$/)) {
+        return callback(new BadRequestException('Only image files are allowed!'), false);
+      }
+      callback(null, true);
+    }
+  }))
+  update(
+    @Param('id') id: string,
+    @Body() data: any,
+    @Request() req: any,
+    @UploadedFile() image?: Express.Multer.File
+  ) {
+    return this.announcementsService.update(id, data, image, req.user);
   }
 
   @UseGuards(RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.SCHOOL_ADMIN, Role.LECTURER)
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.announcementsService.remove(id);
+  remove(@Param('id') id: string, @Request() req: any) {
+    return this.announcementsService.remove(id, req.user);
   }
 }

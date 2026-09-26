@@ -21,13 +21,46 @@ async function bootstrap() {
     fs.writeFileSync(samplePdfPath, '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 55 >>\nstream\nBT /F1 24 Tf 100 700 Td (RFT Academic Past Question Document) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000216 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n321\n%%EOF');
   }
 
-  app.use('/uploads', express.static(uploadsDir));
-  app.use('/uploads', (req, res) => {
+  // Static upload file serving with CORS and resilient fallbacks
+  const staticUploadHandler = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  };
+
+  const missingFileFallback = (req: express.Request, res: express.Response) => {
+    const url = req.url || '';
+    const isImage = url.match(/\.(png|jpg|jpeg|gif|webp|svg)/i);
+
+    if (isImage) {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="420" viewBox="0 0 800 420" fill="none">
+        <rect width="800" height="420" fill="#0A192F"/>
+        <rect x="20" y="20" width="760" height="380" rx="20" fill="#0D2137" stroke="#1E3A5F" stroke-width="2"/>
+        <circle cx="400" cy="170" r="50" fill="#0284C7" fill-opacity="0.2"/>
+        <path d="M380 170L395 185L425 155" stroke="#38BDF8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="400" y="260" fill="#FFFFFF" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="800" text-anchor="middle">Official Campus Announcement</text>
+        <text x="400" y="295" fill="#94A3B8" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600" text-anchor="middle">Institutional Broadcast Notice • RFT Edutech</text>
+      </svg>`;
+      return res.send(placeholderSvg);
+    }
+
     if (fs.existsSync(samplePdfPath)) {
+      res.setHeader('Content-Type', 'application/pdf');
       return res.sendFile(samplePdfPath);
     }
+
     res.status(404).send('File not found');
-  });
+  };
+
+  app.use('/uploads', staticUploadHandler, express.static(uploadsDir), missingFileFallback);
+  app.use('/v1/uploads', staticUploadHandler, express.static(uploadsDir), missingFileFallback);
 
   app.getHttpAdapter().get('/', (req: any, res: any) => {
     res.json({

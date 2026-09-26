@@ -22,12 +22,24 @@ export class AnalyticsService {
       this.prisma.subscription.count({ where: { status: 'active' } }),
     ]);
 
-    let schoolCapacity = 0;
+    let schoolCapacity = 10;
+    let currentPlanName: string | null = null;
     let nextPlanId: string | null = null;
     let planExpiresAt: Date | null = null;
     if (schoolId) {
-      const school = await this.prisma.school.findUnique({ where: { id: schoolId } });
-      schoolCapacity = school?.capacity ?? 10;
+      const school = await this.prisma.school.findUnique({
+        where: { id: schoolId },
+        include: {
+          subscriptions: {
+            where: { status: 'active' },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+      });
+      const activeSub = school?.subscriptions?.[0];
+      currentPlanName = activeSub?.planName || null;
+      schoolCapacity = school?.capacity ?? (activeSub?.planName ? 5000 : 10);
       nextPlanId = school?.nextPlanId || null;
       planExpiresAt = school?.planExpiresAt || null;
     }
@@ -42,6 +54,7 @@ export class AnalyticsService {
       activeSubscriptions,
       pastQuestionsCount: totalContent,
       schoolCapacity,
+      currentPlanName,
       nextPlanId,
       planExpiresAt,
     };
