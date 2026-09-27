@@ -112,10 +112,11 @@ export class AnnouncementsService {
             { author: { role: 'SUPER_ADMIN' } },
             { schoolId: userSchoolId },
             { author: { schoolId: userSchoolId } },
+            { schoolId: null },
           ],
         };
       } else {
-        where = { author: { role: 'SUPER_ADMIN' } };
+        where = {};
       }
     }
 
@@ -124,7 +125,20 @@ export class AnnouncementsService {
     const list = await this.prisma.announcement.findMany({
       where,
       include: {
-        author: { select: { fullName: true, role: true } },
+        author: {
+          select: {
+            id: true,
+            fullName: true,
+            role: true,
+            email: true,
+            phoneNumber: true,
+            bio: true,
+            title: true,
+            profileImageUrl: true,
+            school: { select: { id: true, name: true } },
+            department: { select: { id: true, name: true, faculty: { select: { name: true } } } },
+          },
+        },
         course: true,
         school: true,
         likes: true,
@@ -146,6 +160,9 @@ export class AnnouncementsService {
         text: c.content,
         author: c.author?.fullName || 'Student',
         createdAt: c.createdAt.toISOString(),
+        likes: this.getCommentLikesCount(c.id),
+        hasLiked: this.hasUserLikedComment(c.id, currentUserId),
+        reactions: this.getCommentReactionsList(c.id, currentUserId),
       }));
 
       return {
@@ -160,6 +177,23 @@ export class AnnouncementsService {
         authorName: a.author?.fullName || 'Campus Staff',
         authorRole: a.author?.role,
         authorId: a.authorId,
+        authorProfile: a.author
+          ? {
+              id: a.author.id,
+              fullName: a.author.fullName,
+              name: a.author.fullName,
+              role: a.author.role,
+              email: a.author.email,
+              phoneNumber: a.author.phoneNumber,
+              phone: a.author.phoneNumber,
+              bio: a.author.bio,
+              title: a.author.title,
+              profileImageUrl: a.author.profileImageUrl,
+              school: a.author.school?.name,
+              department: a.author.department?.name,
+              faculty: (a.author.department as any)?.faculty?.name,
+            }
+          : null,
         courseId: a.courseId,
         schoolId: a.schoolId,
         createdAt: a.createdAt.toISOString(),
@@ -174,7 +208,20 @@ export class AnnouncementsService {
     const announcement = await this.prisma.announcement.findUnique({
       where: { id },
       include: {
-        author: { select: { fullName: true, role: true } },
+        author: {
+          select: {
+            id: true,
+            fullName: true,
+            role: true,
+            email: true,
+            phoneNumber: true,
+            bio: true,
+            title: true,
+            profileImageUrl: true,
+            school: { select: { id: true, name: true } },
+            department: { select: { id: true, name: true, faculty: { select: { name: true } } } },
+          },
+        },
         course: true,
         likes: true,
         comments: {
@@ -195,6 +242,9 @@ export class AnnouncementsService {
       text: c.content,
       author: c.author?.fullName || 'Student',
       createdAt: c.createdAt.toISOString(),
+      likes: this.getCommentLikesCount(c.id),
+      hasLiked: this.hasUserLikedComment(c.id, currentUserId),
+      reactions: this.getCommentReactionsList(c.id, currentUserId),
     }));
 
     return {
@@ -209,6 +259,23 @@ export class AnnouncementsService {
       authorName: announcement.author?.fullName || 'Campus Staff',
       authorRole: announcement.author?.role,
       authorId: announcement.authorId,
+      authorProfile: announcement.author
+        ? {
+            id: announcement.author.id,
+            fullName: announcement.author.fullName,
+            name: announcement.author.fullName,
+            role: announcement.author.role,
+            email: announcement.author.email,
+            phoneNumber: announcement.author.phoneNumber,
+            phone: announcement.author.phoneNumber,
+            bio: announcement.author.bio,
+            title: announcement.author.title,
+            profileImageUrl: announcement.author.profileImageUrl,
+            school: announcement.author.school?.name,
+            department: announcement.author.department?.name,
+            faculty: (announcement.author.department as any)?.faculty?.name,
+          }
+        : null,
       courseId: announcement.courseId,
       schoolId: announcement.schoolId,
       createdAt: announcement.createdAt.toISOString(),
@@ -302,7 +369,39 @@ export class AnnouncementsService {
     };
   }
 
-  async getComments(announcementId: string) {
+  // Comment likes: commentId -> Set of userIds
+  private commentLikes: Map<string, Set<string>> = new Map();
+  // Comment reactions: commentId -> emoji -> Set of userIds
+  private commentReactions: Map<string, Map<string, Set<string>>> = new Map();
+
+  private getCommentLikesCount(commentId: string): number {
+    return this.commentLikes.get(commentId)?.size || 0;
+  }
+
+  private hasUserLikedComment(commentId: string, userId?: string): boolean {
+    if (!userId) return false;
+    return Boolean(this.commentLikes.get(commentId)?.has(userId));
+  }
+
+  private getCommentReactionsList(commentId: string, currentUserId?: string) {
+    const emojiMap = this.commentReactions.get(commentId);
+    if (!emojiMap || emojiMap.size === 0) return [];
+
+    const result: { emoji: string; count: number; userIds: string[]; hasReacted: boolean }[] = [];
+    emojiMap.forEach((users, emoji) => {
+      if (users.size > 0) {
+        result.push({
+          emoji,
+          count: users.size,
+          userIds: Array.from(users),
+          hasReacted: Boolean(currentUserId && users.has(currentUserId)),
+        });
+      }
+    });
+    return result;
+  }
+
+  async getComments(announcementId: string, currentUserId?: string) {
     const comments = await this.prisma.announcementComment.findMany({
       where: { announcementId },
       include: { author: { select: { fullName: true } } },
@@ -314,6 +413,9 @@ export class AnnouncementsService {
       text: c.content,
       author: c.author?.fullName || 'Student',
       createdAt: c.createdAt.toISOString(),
+      likes: this.getCommentLikesCount(c.id),
+      hasLiked: this.hasUserLikedComment(c.id, currentUserId),
+      reactions: this.getCommentReactionsList(c.id, currentUserId),
     }));
   }
 
@@ -336,6 +438,71 @@ export class AnnouncementsService {
       text: comment.content,
       author: comment.author?.fullName || 'Student',
       createdAt: comment.createdAt.toISOString(),
+      likes: 0,
+      hasLiked: false,
+      reactions: [],
+    };
+  }
+
+  async toggleCommentLike(commentId: string, userId: string) {
+    const comment = await this.prisma.announcementComment.findUnique({ where: { id: commentId } });
+    if (!comment) throw new NotFoundException('Comment not found');
+
+    if (!this.commentLikes.has(commentId)) {
+      this.commentLikes.set(commentId, new Set());
+    }
+
+    const userSet = this.commentLikes.get(commentId)!;
+    let liked = false;
+    if (userSet.has(userId)) {
+      userSet.delete(userId);
+      liked = false;
+    } else {
+      userSet.add(userId);
+      liked = true;
+    }
+
+    return {
+      commentId,
+      liked,
+      likesCount: userSet.size,
+    };
+  }
+
+  async reactToComment(commentId: string, userId: string, emoji: string) {
+    if (!emoji || !emoji.trim()) {
+      throw new BadRequestException('Emoji cannot be empty');
+    }
+
+    const comment = await this.prisma.announcementComment.findUnique({ where: { id: commentId } });
+    if (!comment) throw new NotFoundException('Comment not found');
+
+    const cleanEmoji = emoji.trim();
+    if (!this.commentReactions.has(commentId)) {
+      this.commentReactions.set(commentId, new Map());
+    }
+
+    const emojiMap = this.commentReactions.get(commentId)!;
+    if (!emojiMap.has(cleanEmoji)) {
+      emojiMap.set(cleanEmoji, new Set());
+    }
+
+    const usersSet = emojiMap.get(cleanEmoji)!;
+    let reacted = false;
+    if (usersSet.has(userId)) {
+      usersSet.delete(userId);
+      reacted = false;
+    } else {
+      usersSet.add(userId);
+      reacted = true;
+    }
+
+    const reactions = this.getCommentReactionsList(commentId, userId);
+    return {
+      commentId,
+      emoji: cleanEmoji,
+      reacted,
+      reactions,
     };
   }
 }

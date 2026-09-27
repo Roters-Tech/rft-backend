@@ -18,4 +18,14 @@ export class ChatController {
     const userId = req.user?.id || req.user?.userId || req.user?.sub;
     return this.chatService.sendMessage(courseId, userId, dto);
   }
+
+  @Post('messages/:messageId/reactions')
+  reactToMessage(
+    @Req() req: any,
+    @Param('messageId') messageId: string,
+    @Body() dto: { emoji: string }
+  ) {
+    const userId = req.user?.id || req.user?.userId || req.user?.sub;
+    return this.chatService.reactToMessage(messageId, userId, dto.emoji);
+  }
 }

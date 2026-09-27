@@ -237,6 +237,63 @@ export class UsersService {
     };
   }
 
+  async getLecturerPublicProfile(idOrName: string) {
+    if (!idOrName) throw new NotFoundException('Lecturer identifier is required');
+
+    let user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: idOrName },
+          { fullName: { contains: idOrName, mode: 'insensitive' } },
+          { email: idOrName.toLowerCase() },
+        ],
+      },
+      include: {
+        school: { select: { id: true, name: true, acronym: true } },
+        department: { select: { id: true, name: true, faculty: { select: { id: true, name: true } } } },
+        taughtCourses: { select: { id: true, code: true, name: true, unit: true, semester: true } },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Lecturer profile not found');
+    }
+
+    const [pastQuestionsCount, materialsCount, totalContentCount] = await Promise.all([
+      this.prisma.content.count({
+        where: { uploaderId: user.id, type: 'past_question' },
+      }),
+      this.prisma.content.count({
+        where: { uploaderId: user.id, type: { not: 'past_question' } },
+      }),
+      this.prisma.content.count({
+        where: { uploaderId: user.id },
+      }),
+    ]);
+
+    return {
+      id: user.id,
+      fullName: user.fullName,
+      name: user.fullName,
+      email: user.email,
+      phoneNumber: user.phoneNumber,
+      phone: user.phoneNumber,
+      role: user.role,
+      profileImageUrl: user.profileImageUrl,
+      bio: user.bio,
+      title: user.title,
+      school: user.school?.name,
+      department: user.department?.name,
+      faculty: user.department?.faculty?.name,
+      taughtCourses: user.taughtCourses,
+      pastQuestionsCount,
+      materialsCount,
+      totalContentCount,
+      certifications: user.certifications || [],
+      achievements: user.achievements || [],
+    };
+  }
+
   async updateProfile(userId: string, dto: any, file?: Express.Multer.File) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');

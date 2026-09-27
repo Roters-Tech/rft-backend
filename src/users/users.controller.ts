@@ -84,6 +84,18 @@ export class UsersController {
     return this.usersService.updateProfile(userId, dto);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('lecturer/:id')
+  getLecturerProfile(@Param('id') id: string) {
+    return this.usersService.getLecturerPublicProfile(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('lecturers/:id')
+  getLecturersProfileAlias(@Param('id') id: string) {
+    return this.usersService.getLecturerPublicProfile(id);
+  }
+
   @Roles(Role.SUPER_ADMIN, Role.SCHOOL_ADMIN)
   @Get(':id')
   findOne(@Param('id') id: string) {

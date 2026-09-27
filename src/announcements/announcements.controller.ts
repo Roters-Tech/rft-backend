@@ -14,9 +14,7 @@ export class AnnouncementsController {
   @Post()
   @UseInterceptors(FileInterceptor('image', {
     fileFilter: (req, file, callback) => {
-      if (!file.mimetype.match(/\/(jpg|jpeg|png|gif)$/)) {
-        return callback(new BadRequestException('Only image files are allowed!'), false);
-      }
+      // Allow images and common document attachments
       callback(null, true);
     }
   }))
@@ -47,8 +45,9 @@ export class AnnouncementsController {
   }
 
   @Get(':id/comments')
-  getComments(@Param('id') id: string) {
-    return this.announcementsService.getComments(id);
+  getComments(@Param('id') id: string, @Request() req: any) {
+    const userId = req.user?.userId || req.user?.id;
+    return this.announcementsService.getComments(id, userId);
   }
 
   @Post(':id/comments')
@@ -60,6 +59,38 @@ export class AnnouncementsController {
     const authorId = req.user?.userId || req.user?.id;
     const content = dto.content || dto.text || '';
     return this.announcementsService.addComment(id, authorId, content);
+  }
+
+  @Post(':id/comments/:commentId/like')
+  toggleCommentLike(@Param('commentId') commentId: string, @Request() req: any) {
+    const userId = req.user?.userId || req.user?.id;
+    return this.announcementsService.toggleCommentLike(commentId, userId);
+  }
+
+  @Post('comments/:commentId/like')
+  toggleCommentLikeDirect(@Param('commentId') commentId: string, @Request() req: any) {
+    const userId = req.user?.userId || req.user?.id;
+    return this.announcementsService.toggleCommentLike(commentId, userId);
+  }
+
+  @Post(':id/comments/:commentId/reactions')
+  reactToComment(
+    @Param('commentId') commentId: string,
+    @Body() dto: { emoji: string },
+    @Request() req: any,
+  ) {
+    const userId = req.user?.userId || req.user?.id;
+    return this.announcementsService.reactToComment(commentId, userId, dto.emoji);
+  }
+
+  @Post('comments/:commentId/reactions')
+  reactToCommentDirect(
+    @Param('commentId') commentId: string,
+    @Body() dto: { emoji: string },
+    @Request() req: any,
+  ) {
+    const userId = req.user?.userId || req.user?.id;
+    return this.announcementsService.reactToComment(commentId, userId, dto.emoji);
   }
 
   @UseGuards(RolesGuard)
