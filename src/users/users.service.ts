@@ -80,14 +80,24 @@ export class UsersService {
       },
     });
 
-    // Send email with credentials via Resend
-    await this.emailService.sendRoleCredentialsEmail(
-      user.email,
-      user.fullName,
-      tempPassword,
-      user.role,
-      schoolName,
-    );
+    console.log(`\n📧 NEW USER CREATED`);
+    console.log(`   Email: ${user.email}`);
+    console.log(`   Name: ${user.fullName}`);
+    console.log(`   Role: ${user.role}`);
+    console.log(`   Temp Password: ${tempPassword}\n`);
+
+    // Send email with credentials via Resend (non-blocking)
+    try {
+      await this.emailService.sendRoleCredentialsEmail(
+        user.email,
+        user.fullName,
+        tempPassword,
+        user.role,
+        schoolName,
+      );
+    } catch (emailErr) {
+      console.warn('⚠️  Email delivery failed:', (emailErr as any)?.message || emailErr);
+    }
 
     return {
       message: 'Account created successfully. Credentials sent via email.',
