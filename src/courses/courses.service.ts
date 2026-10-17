@@ -6,8 +6,24 @@ export class CoursesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: any, creatorUser?: any) {
-    const { lecturerIds, ...rest } = dto;
+    const { lecturerIds, facultyId, ...rest } = dto;
     const data: any = { ...rest };
+
+    if (data.unit !== undefined && data.unit !== null && data.unit !== '') {
+      data.unit = Number(data.unit);
+    } else {
+      delete data.unit;
+    }
+    if (data.credits !== undefined && data.credits !== null && data.credits !== '') {
+      data.credits = Number(data.credits);
+    } else {
+      delete data.credits;
+    }
+    if (data.semester !== undefined && data.semester !== null && data.semester !== '') {
+      data.semester = Number(data.semester);
+    } else {
+      delete data.semester;
+    }
 
     if (!data.schoolId && creatorUser?.schoolId) {
       data.schoolId = creatorUser.schoolId;
@@ -25,6 +41,11 @@ export class CoursesService {
         if (!data.schoolId && u.schoolId) data.schoolId = u.schoolId;
         if (!data.departmentId && u.departmentId) data.departmentId = u.departmentId;
       }
+    }
+
+    if (data.departmentId && !data.schoolId) {
+      const dept = await this.prisma.department.findUnique({ where: { id: data.departmentId } });
+      if (dept) data.schoolId = dept.schoolId;
     }
 
     if (!data.schoolId) {
@@ -54,13 +75,29 @@ export class CoursesService {
 
     return this.prisma.course.create({
       data,
-      include: { school: true, department: true, lecturers: true },
+      include: {
+        school: true,
+        department: { include: { faculty: true } },
+        lecturers: true,
+      },
     });
   }
 
-  async findAllAdmin() {
+  async findAllAdmin(user?: any) {
+    const where: any = {};
+    if (user && user.role === 'SCHOOL_ADMIN' && user.schoolId) {
+      where.schoolId = user.schoolId;
+    }
+
     return this.prisma.course.findMany({
-      include: { school: true, department: true },
+      where,
+      include: {
+        school: true,
+        department: { include: { faculty: true } },
+        lecturers: true,
+        _count: { select: { enrollments: true } },
+      },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
@@ -167,6 +204,29 @@ export class CoursesService {
   }
 
   async update(id: string, data: any) {
-    return this.prisma.course.update({ where: { id }, data });
+    const { lecturerIds, ...rest } = data;
+    const updateData: any = { ...rest };
+    if (lecturerIds !== undefined && Array.isArray(lecturerIds)) {
+      updateData.lecturers = {
+        set: lecturerIds.map((lId: string) => ({ id: lId })),
+      };
+    }
+    return this.prisma.course.update({
+      where: { id },
+      data: updateData,
+      include: {
+        school: true,
+        department: { include: { faculty: true } },
+        lecturers: true,
+      },
+    });
+  }
+
+  async delete(id: string) {
+    await this.prisma.announcement.updateMany({
+      where: { courseId: id },
+      data: { courseId: null },
+    });
+    return this.prisma.course.delete({ where: { id } });
   }
 }

@@ -66,6 +66,7 @@ model Department {
   users          User[]
   courses        Course[]
   admissionRequests AdmissionRequest[]
+  announcements  Announcement[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 }
@@ -239,9 +240,12 @@ model Announcement {
   audienceType   String
   courseId       String?
   schoolId       String?
+  departmentId   String?
+  level          String?
   authorId       String
   course         Course?      @relation(fields: [courseId], references: [id])
   school         School?      @relation(fields: [schoolId], references: [id])
+  department     Department?  @relation(fields: [departmentId], references: [id])
   author         User         @relation(fields: [authorId], references: [id])
   likes          AnnouncementLike[]
   comments       AnnouncementComment[]

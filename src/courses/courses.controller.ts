@@ -25,8 +25,8 @@ export class CoursesController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.SCHOOL_ADMIN)
   @Get('admin/courses')
-  findAllAdmin() {
-    return this.coursesService.findAllAdmin();
+  findAllAdmin(@Req() req: any) {
+    return this.coursesService.findAllAdmin(req.user);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -34,6 +34,13 @@ export class CoursesController {
   @Patch('admin/courses/:id')
   update(@Param('id') id: string, @Body() data: any) {
     return this.coursesService.update(id, data);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN, Role.SCHOOL_ADMIN)
+  @Delete('admin/courses/:id')
+  delete(@Param('id') id: string) {
+    return this.coursesService.delete(id);
   }
 
   // Student & Lecturer scopes

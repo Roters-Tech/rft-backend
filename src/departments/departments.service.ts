@@ -59,9 +59,11 @@ export class DepartmentsService {
     const deps = await this.prisma.department.findMany({
       where: { schoolId },
       include: {
+        faculty: true,
         _count: { select: { courses: true } },
         users: { where: { role: 'STUDENT' }, select: { id: true } },
       },
+      orderBy: { name: 'asc' },
     });
     return deps.map((d) => ({
       ...d,
@@ -72,10 +74,12 @@ export class DepartmentsService {
   async findAll() {
     const deps = await this.prisma.department.findMany({
       include: {
+        faculty: true,
         _count: { select: { courses: true } },
         users: { where: { role: 'STUDENT' }, select: { id: true } },
         school: true,
       },
+      orderBy: { name: 'asc' },
     });
     return deps.map((d) => ({
       ...d,

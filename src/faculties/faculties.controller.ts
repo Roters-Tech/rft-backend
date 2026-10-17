@@ -26,12 +26,14 @@ export class FacultiesController {
 
   // GET /v1/admin/faculties
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.SUPER_ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.SCHOOL_ADMIN, Role.LECTURER)
   @Get('admin/faculties')
   async findAll(@Request() req: any, @Query('schoolId') querySchoolId?: string) {
-    const schoolId = req.user.role === Role.SCHOOL_ADMIN ? req.user.schoolId : (querySchoolId || req.user.schoolId);
+    const schoolId = (req.user.role === Role.SCHOOL_ADMIN || req.user.role === Role.LECTURER)
+      ? req.user.schoolId
+      : (querySchoolId || req.user.schoolId);
     if (!schoolId) {
-      return [];
+      return this.facultiesService.findAllPublic();
     }
     return this.facultiesService.findAllBySchool(schoolId);
   }

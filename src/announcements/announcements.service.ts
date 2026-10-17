@@ -45,21 +45,53 @@ export class AnnouncementsService {
       imageUrl = await this.supabaseStorage.uploadFile(file);
     }
 
+    const author = await this.prisma.user.findUnique({
+      where: { id: authorId },
+      include: {
+        classRepAssignments: { where: { active: true } },
+        department: true,
+      },
+    });
+
+    const isClassRep =
+      author?.role === 'STUDENT' ||
+      (author?.classRepAssignments && author.classRepAssignments.length > 0) ||
+      Boolean(data.isClassRep);
+
+    let departmentId = data.departmentId && data.departmentId.trim() !== '' ? data.departmentId : null;
+    let level = data.level && data.level.trim() !== '' ? data.level.trim() : null;
+    let schoolId = data.schoolId && data.schoolId.trim() !== '' ? data.schoolId : (author?.schoolId || null);
+    let audienceType = data.audienceType || 'ALL';
+
+    if (isClassRep) {
+      // Class rep announcements are strictly for students in their department and level
+      departmentId = author?.departmentId || departmentId;
+      level = author?.level || level || '100';
+      audienceType = 'CLASS_REP';
+    } else if (author?.role === 'LECTURER') {
+      if (!departmentId && author?.departmentId) {
+        departmentId = author.departmentId;
+      }
+    }
+
     const created = await this.prisma.announcement.create({
       data: {
         title: data.title || 'Announcement',
         message: data.message || data.content || '',
-        audienceType: data.audienceType || 'ALL',
+        audienceType,
         type: data.type || 'GENERAL',
         imageUrl: imageUrl,
         courseId: data.courseId && data.courseId.trim() !== '' ? data.courseId : null,
-        schoolId: data.schoolId && data.schoolId.trim() !== '' ? data.schoolId : null,
+        schoolId: schoolId && schoolId.trim() !== '' ? schoolId : null,
+        departmentId: departmentId && departmentId.trim() !== '' ? departmentId : null,
+        level: level && level.trim() !== '' ? level.trim() : null,
         authorId,
       },
       include: {
         author: { select: { fullName: true, role: true } },
         course: true,
         school: true,
+        department: true,
       },
     });
 
@@ -67,8 +99,19 @@ export class AnnouncementsService {
     (async () => {
       try {
         let userFilter: any = { pushToken: { not: null } };
-        if (data.schoolId && data.schoolId.trim() !== '') {
-          userFilter.schoolId = data.schoolId;
+        if (schoolId) {
+          userFilter.schoolId = schoolId;
+        }
+        if (departmentId) {
+          userFilter.departmentId = departmentId;
+        }
+        if (level) {
+          const numLevel = level.replace(/[^0-9]/g, '');
+          userFilter.OR = [
+            { level: level },
+            { level: numLevel },
+            { level: `${numLevel}L` },
+          ];
         }
 
         const usersWithToken = await this.prisma.user.findMany({
@@ -102,25 +145,192 @@ export class AnnouncementsService {
   }
 
   async findAll(user?: any) {
+    const currentUserId = user?.userId || user?.id;
     let where: any = {};
 
-    if (user && user.role !== 'SUPER_ADMIN') {
-      const userSchoolId = user.schoolId;
-      if (userSchoolId) {
-        where = {
-          OR: [
-            { author: { role: 'SUPER_ADMIN' } },
-            { schoolId: userSchoolId },
-            { author: { schoolId: userSchoolId } },
-            { schoolId: null },
-          ],
-        };
-      } else {
+    if (user) {
+      if (user.role === 'SUPER_ADMIN') {
+        // Super admin sees all announcements across campuses, including class rep announcements
         where = {};
+      } else if (user.role === 'LECTURER' || user.role === 'SCHOOL_ADMIN') {
+        // Requirement 4: Announcements created by class rep shouldn't show in the lecturer and school admin dashboard only super admin.
+        const conditions: any[] = [
+          { author: { role: { not: 'STUDENT' } } },
+          { audienceType: { notIn: ['CLASS_REP', 'class_rep', 'REP', 'rep'] } },
+        ];
+
+        const userSchoolId = user.schoolId;
+        if (userSchoolId) {
+          where = {
+            AND: [
+              ...conditions,
+              {
+                OR: [
+                  { author: { role: 'SUPER_ADMIN' } },
+                  { schoolId: userSchoolId },
+                  { author: { schoolId: userSchoolId } },
+                  { schoolId: null },
+                ],
+              },
+            ],
+          };
+        } else {
+          where = {
+            AND: conditions,
+          };
+        }
+      } else if (user.role === 'STUDENT') {
+        const student = await this.prisma.user.findUnique({
+          where: { id: currentUserId },
+          select: {
+            id: true,
+            schoolId: true,
+            departmentId: true,
+            level: true,
+            enrollments: { select: { courseId: true } },
+          },
+        });
+
+        const studentSchoolId = student?.schoolId || user.schoolId;
+        const studentDeptId = student?.departmentId || user.departmentId;
+        const studentLevelRaw = student?.level || user.level || '100';
+        const studentLevelNum = studentLevelRaw.replace(/[^0-9]/g, '') || '100';
+
+        const levelVariants = [
+          studentLevelNum,
+          `${studentLevelNum}L`,
+          `${studentLevelNum} Level`,
+          studentLevelRaw,
+        ];
+
+        // 1. Explicit enrollments
+        const enrolledCourseIds = student?.enrollments?.map((e) => e.courseId) || [];
+
+        // 2. Department & level courses that the student is offering as part of their curriculum
+        let deptLevelCourseIds: string[] = [];
+        if (studentDeptId) {
+          const deptCourses = await this.prisma.course.findMany({
+            where: {
+              departmentId: studentDeptId,
+              ...(studentSchoolId ? { schoolId: studentSchoolId } : {}),
+              OR: [
+                { level: studentLevelNum },
+                { level: `${studentLevelNum}L` },
+                { level: `${studentLevelNum} Level` },
+                { level: null },
+                { level: '' },
+              ],
+            },
+            select: { id: true },
+          });
+          deptLevelCourseIds = deptCourses.map((c) => c.id);
+        }
+
+        const studentOfferedCourseIds = Array.from(
+          new Set([...enrolledCourseIds, ...deptLevelCourseIds]),
+        );
+
+        const schoolMatchCondition = studentSchoolId
+          ? {
+              OR: [
+                { schoolId: studentSchoolId },
+                { schoolId: null },
+                { author: { schoolId: studentSchoolId } },
+                { author: { schoolId: null } },
+              ],
+            }
+          : {};
+
+        const studentScopeOr: any[] = [
+          // 1. Announcements authored by the user themselves
+          { authorId: currentUserId },
+
+          // 2. Super Admin announcements (platform-wide broadcasts)
+          { author: { role: 'SUPER_ADMIN' } },
+
+          // 3. School Admin announcements (general school updates, or targeted to department/level if specified)
+          {
+            author: { role: 'SCHOOL_ADMIN' },
+            ...schoolMatchCondition,
+            AND: [
+              {
+                OR: [
+                  { departmentId: null },
+                  ...(studentDeptId ? [{ departmentId: studentDeptId }] : []),
+                ],
+              },
+              {
+                OR: [
+                  { level: null },
+                  { level: '' },
+                  { level: 'ALL' },
+                  ...levelVariants.map((v) => ({ level: v })),
+                ],
+              },
+            ],
+          },
+
+          // 4. Class Rep announcements (strictly fixed to the class rep's department and level)
+          {
+            audienceType: 'CLASS_REP',
+            ...schoolMatchCondition,
+            ...(studentDeptId ? { departmentId: studentDeptId } : {}),
+            level: { in: levelVariants },
+          },
+
+          // 5. Lecturer General Updates (general campus/faculty announcements posted by lecturers, not specific to course/level)
+          {
+            author: { role: 'LECTURER' },
+            type: { not: 'LECTURER_UPDATE' },
+            courseId: null,
+            audienceType: { not: 'CLASS_REP' },
+            ...schoolMatchCondition,
+            AND: [
+              {
+                OR: [
+                  { level: null },
+                  { level: '' },
+                  { level: 'ALL' },
+                ],
+              },
+              {
+                OR: [
+                  { departmentId: null },
+                  ...(studentDeptId ? [{ departmentId: studentDeptId }] : []),
+                ],
+              },
+            ],
+          },
+
+          // 6. Lecturer Updates:
+          // Student sees the announcement if they are in that particular level OR offering that course
+          {
+            author: { role: 'LECTURER' },
+            ...schoolMatchCondition,
+            AND: [
+              {
+                OR: [
+                  // Targeted by Level: student must be in that particular level
+                  {
+                    level: { in: levelVariants },
+                    OR: [
+                      { departmentId: null },
+                      ...(studentDeptId ? [{ departmentId: studentDeptId }] : []),
+                    ],
+                  },
+                  // Targeted by Course: student must be offering that course
+                  ...(studentOfferedCourseIds.length > 0
+                    ? [{ courseId: { in: studentOfferedCourseIds } }]
+                    : []),
+                ],
+              },
+            ],
+          },
+        ];
+
+        where = { OR: studentScopeOr };
       }
     }
-
-    const currentUserId = user?.userId || user?.id;
 
     const list = await this.prisma.announcement.findMany({
       where,
@@ -141,6 +351,7 @@ export class AnnouncementsService {
         },
         course: true,
         school: true,
+        department: { select: { id: true, name: true } },
         likes: true,
         comments: {
           include: { author: { select: { fullName: true } } },
@@ -173,6 +384,9 @@ export class AnnouncementsService {
         audienceType: a.audienceType,
         type: a.type,
         imageUrl: a.imageUrl,
+        level: a.level,
+        departmentId: a.departmentId,
+        department: a.department ? { id: a.department.id, name: a.department.name } : null,
         author: a.author?.fullName || 'Campus Staff',
         authorName: a.author?.fullName || 'Campus Staff',
         authorRole: a.author?.role,
@@ -223,6 +437,8 @@ export class AnnouncementsService {
           },
         },
         course: true,
+        school: true,
+        department: { select: { id: true, name: true } },
         likes: true,
         comments: {
           include: { author: { select: { fullName: true } } },
@@ -255,6 +471,9 @@ export class AnnouncementsService {
       audienceType: announcement.audienceType,
       type: announcement.type,
       imageUrl: announcement.imageUrl,
+      level: announcement.level,
+      departmentId: announcement.departmentId,
+      department: announcement.department ? { id: announcement.department.id, name: announcement.department.name } : null,
       author: announcement.author?.fullName || 'Campus Staff',
       authorName: announcement.author?.fullName || 'Campus Staff',
       authorRole: announcement.author?.role,
@@ -306,6 +525,12 @@ export class AnnouncementsService {
     if (data.audienceType !== undefined) updateData.audienceType = data.audienceType;
     if (data.type !== undefined) updateData.type = data.type;
     if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
+    if (data.level !== undefined) {
+      updateData.level = data.level && data.level.trim() !== '' ? data.level.trim() : null;
+    }
+    if (data.departmentId !== undefined) {
+      updateData.departmentId = data.departmentId && data.departmentId.trim() !== '' ? data.departmentId : null;
+    }
     if (data.courseId !== undefined) {
       updateData.courseId = data.courseId && data.courseId.trim() !== '' ? data.courseId : null;
     }
@@ -320,6 +545,7 @@ export class AnnouncementsService {
         author: { select: { fullName: true, role: true } },
         course: true,
         school: true,
+        department: true,
       },
     });
   }

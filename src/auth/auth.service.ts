@@ -466,7 +466,7 @@ export class AuthService {
   }
 
   async logout(authUser: JwtAuthUser) {
-    const exp = authUser.exp ? new Date(authUser.exp * 1000) : new Date(Date.now() + 60 * 60_000);
+    const exp = authUser.exp ? new Date(authUser.exp * 1000) : new Date(Date.now() + 90 * 24 * 60 * 60_000);
     await this.prisma.revokedToken.create({
       data: {
         jti: authUser.jti,
