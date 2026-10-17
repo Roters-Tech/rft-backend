@@ -42,9 +42,19 @@ export class AuthService {
     return bcrypt.compare(password, passwordHash);
   }
 
-  private signAccessToken(userId: string, role: Role): Promise<{ accessToken: string; jti: string }> {
+  private signAccessToken(
+    userId: string,
+    role: Role,
+    customExpiresIn?: string,
+  ): Promise<{ accessToken: string; jti: string }> {
     const jti = crypto.randomUUID();
-    return this.jwt.signAsync({ sub: userId, role, jti }).then((accessToken) => ({ accessToken, jti }));
+    // Mobile student users receive a 1-year (365d) persistent session so they stay logged in even after closing and reopening the app
+    const tokenExpiresIn =
+      customExpiresIn ||
+      (role === Role.STUDENT ? '365d' : (process.env.JWT_EXPIRES_IN ?? '365d'));
+    return this.jwt
+      .signAsync({ sub: userId, role, jti }, { expiresIn: tokenExpiresIn as any })
+      .then((accessToken) => ({ accessToken, jti }));
   }
 
   private toUserResponse(user: any) {
@@ -375,7 +385,12 @@ export class AuthService {
       data: { status: 'ACTIVE' },
     });
 
-    const { accessToken } = await this.signAccessToken(user.id, user.role);
+    const isMobileStudent = user.role === Role.STUDENT;
+    const { accessToken } = await this.signAccessToken(
+      user.id,
+      user.role,
+      isMobileStudent ? '365d' : undefined,
+    );
     return {
       message: 'OTP verified successfully',
       accessToken,
@@ -452,7 +467,15 @@ export class AuthService {
       throw new UnauthorizedException('UNVERIFIED_EMAIL:' + user.email);
     }
 
-    const { accessToken } = await this.signAccessToken(user.id, user.role);
+    const isMobileStudent =
+      dto.clientType === 'student' ||
+      (dto as any).app === 'student' ||
+      user.role === Role.STUDENT;
+    const { accessToken } = await this.signAccessToken(
+      user.id,
+      user.role,
+      isMobileStudent ? '365d' : undefined,
+    );
     return { accessToken, user: this.toUserResponse(user) };
   }
 

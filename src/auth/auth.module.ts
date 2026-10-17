@@ -17,7 +17,7 @@ import { EmailModule } from '../email/email.module';
       // Dev fallback to keep local testing functional.
       // For production, always set `JWT_SECRET` in your environment.
       secret: process.env.JWT_SECRET ?? 'dev-jwt-secret-change-me',
-      signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN ?? '90d') as any },
+      signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN ?? '365d') as any },
     }),
     EmailModule,
   ],
