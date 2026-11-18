@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { SupabaseStorageService } from '../storage/supabase-storage.service';
 import { Role } from '@prisma/client';
+import { compressPdfBuffer } from './pdf-compressor.util';
 
 @Injectable()
 export class ContentService {
@@ -15,20 +16,28 @@ export class ContentService {
   async create(data: any, userRole?: Role, userId?: string, file?: Express.Multer.File) {
     const defaultPrices = await this.settingsService.getPricingSettings();
     const type = data.type || 'resource';
-    const defaultPrice = type === 'slides' ? defaultPrices.slidePrice : (type === 'past_question' ? defaultPrices.pastQuestionPrice : defaultPrices.courseMaterialPrice);
+    const defaultPrice =
+      type === 'slides'
+        ? defaultPrices.slidePrice
+        : type === 'past_question'
+        ? defaultPrices.pastQuestionPrice
+        : defaultPrices.courseMaterialPrice;
 
     // Rule: Lecturer uploads automatically default to Paid
-    let isPaid = data.isPaid !== undefined ? (String(data.isPaid) === 'true' || data.isPaid === true) : true;
+    let isPaid = data.isPaid !== undefined ? String(data.isPaid) === 'true' || data.isPaid === true : true;
     if (userRole === Role.LECTURER) {
       isPaid = true;
     }
 
     const price = isPaid ? (data.price && Number(data.price) > 0 ? Number(data.price) : defaultPrice) : 0;
-    const rawExt = file ? file.originalname.split('.').pop()?.toLowerCase() : (data.title ? data.title.split('.').pop()?.toLowerCase() : 'pdf');
+    const rawExt = file ? file.originalname.split('.').pop()?.toLowerCase() : data.title ? data.title.split('.').pop()?.toLowerCase() : 'pdf';
     const fileExtension = rawExt && rawExt.length <= 5 ? rawExt : 'pdf';
 
     let downloadUrl = data.downloadUrl;
     if (file) {
+      if (file.mimetype?.includes('pdf') || file.originalname.toLowerCase().endsWith('.pdf')) {
+        file.buffer = await compressPdfBuffer(file.buffer);
+      }
       downloadUrl = await this.supabaseStorage.uploadFile(file);
     } else if (!downloadUrl) {
       const port = process.env.PORT || 3006;
@@ -48,6 +57,7 @@ export class ContentService {
         visibility: data.visibility || 'public',
         isPaid,
         price,
+        level: data.level || null,
         courseId: data.courseId || null,
         schoolId: data.schoolId || null,
         uploaderId: userId || data.uploaderId || null,
@@ -67,10 +77,19 @@ export class ContentService {
       const fileExtension = originalName.split('.').pop()?.toLowerCase() || 'pdf';
 
       try {
+        if (file.mimetype?.includes('pdf') || file.originalname.toLowerCase().endsWith('.pdf')) {
+          file.buffer = await compressPdfBuffer(file.buffer);
+        }
+
         const downloadUrl = await this.supabaseStorage.uploadFile(file);
         const title = itemData.title || originalName.replace(/\.[^/.]+$/, '');
         const type = itemData.type || 'resource';
-        const defaultPrice = type === 'slides' ? defaultPrices.slidePrice : (type === 'past_question' ? defaultPrices.pastQuestionPrice : defaultPrices.courseMaterialPrice);
+        const defaultPrice =
+          type === 'slides'
+            ? defaultPrices.slidePrice
+            : type === 'past_question'
+            ? defaultPrices.pastQuestionPrice
+            : defaultPrices.courseMaterialPrice;
 
         let isPaid = itemData.isPaid !== undefined ? Boolean(itemData.isPaid) : true;
         if (user.role === Role.LECTURER) {
@@ -118,15 +137,71 @@ export class ContentService {
     };
   }
 
+  async update(id: string, body: any, user: { id: string; role: Role; schoolId?: string }, file?: Express.Multer.File) {
+    const existing = await this.prisma.content.findUnique({
+      where: { id },
+      include: { course: true, school: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Content not found');
+    }
+
+    if (user.role === Role.LECTURER && existing.uploaderId !== user.id) {
+      throw new ForbiddenException('You can only edit content that you uploaded');
+    }
+    if (user.role === Role.SCHOOL_ADMIN && existing.schoolId && user.schoolId && existing.schoolId !== user.schoolId) {
+      throw new ForbiddenException('You can only edit content from your school');
+    }
+
+    const updateData: any = {};
+    if (body.title !== undefined) updateData.title = body.title;
+    if (body.type !== undefined) updateData.type = body.type;
+    if (body.courseId !== undefined) updateData.courseId = body.courseId || null;
+    if (body.level !== undefined) updateData.level = body.level || null;
+    if (body.isPaid !== undefined) {
+      updateData.isPaid = String(body.isPaid) === 'true' || body.isPaid === true;
+    }
+    if (body.price !== undefined) {
+      updateData.price = Number(body.price) || 0;
+    }
+
+    if (file) {
+      if (file.mimetype?.includes('pdf') || file.originalname.toLowerCase().endsWith('.pdf')) {
+        file.buffer = await compressPdfBuffer(file.buffer);
+      }
+      const downloadUrl = await this.supabaseStorage.uploadFile(file);
+      updateData.downloadUrl = downloadUrl;
+      const rawExt = file.originalname.split('.').pop()?.toLowerCase();
+      if (rawExt) updateData.fileType = rawExt;
+    } else if (body.downloadUrl) {
+      updateData.downloadUrl = body.downloadUrl;
+    }
+
+    return this.prisma.content.update({
+      where: { id },
+      data: updateData,
+      include: {
+        course: true,
+        school: true,
+        uploader: { select: { id: true, fullName: true, role: true } },
+      },
+    });
+  }
+
   async updatePricing(id: string, dto: { isPaid?: boolean; price?: number }) {
     const existing = await this.prisma.content.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Content not found');
 
     const defaultPrices = await this.settingsService.getPricingSettings();
-    const defaultPrice = existing.type === 'slides' ? defaultPrices.slidePrice : (existing.type === 'past_question' ? defaultPrices.pastQuestionPrice : defaultPrices.courseMaterialPrice);
+    const defaultPrice =
+      existing.type === 'slides'
+        ? defaultPrices.slidePrice
+        : existing.type === 'past_question'
+        ? defaultPrices.pastQuestionPrice
+        : defaultPrices.courseMaterialPrice;
 
     const isPaid = dto.isPaid !== undefined ? dto.isPaid : existing.isPaid;
-    const price = isPaid ? (dto.price !== undefined ? dto.price : (existing.price || defaultPrice)) : 0;
+    const price = isPaid ? (dto.price !== undefined ? dto.price : existing.price || defaultPrice) : 0;
 
     return this.prisma.content.update({
       where: { id },
@@ -175,7 +250,19 @@ export class ContentService {
     return content;
   }
 
-  async remove(id: string) {
+  async remove(id: string, user?: { id: string; role: Role; schoolId?: string }) {
+    const existing = await this.prisma.content.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Content not found');
+
+    if (user) {
+      if (user.role === Role.LECTURER && existing.uploaderId !== user.id) {
+        throw new ForbiddenException('You can only delete content that you uploaded');
+      }
+      if (user.role === Role.SCHOOL_ADMIN && existing.schoolId && user.schoolId && existing.schoolId !== user.schoolId) {
+        throw new ForbiddenException('You can only delete content from your school');
+      }
+    }
+
     return this.prisma.content.delete({ where: { id } });
   }
 }
