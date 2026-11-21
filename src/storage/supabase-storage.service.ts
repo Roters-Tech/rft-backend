@@ -19,9 +19,9 @@ export class SupabaseStorageService {
     const supabaseUrl = process.env.SUPABASE_URL || 'https://phutsvgmbcmyraxsjyoy.supabase.co';
     const supabaseKey =
       process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.SUPABASE_ANON_KEY ||
       process.env.SUPABASE_KEY ||
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBodXRzdmdtYmNteXJheHNqeW95Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEzODU5NDksImV4cCI6MjA1Njk2MTk0OX0';
+      process.env.SUPABASE_ANON_KEY ||
+      'sb_publishable_Zg73u1lKXLiDOn43jZhIWw_A8dMMeLa';
 
     this.supabase = createClient(supabaseUrl, supabaseKey, {
       auth: { persistSession: false, autoRefreshToken: false },
