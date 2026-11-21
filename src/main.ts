@@ -10,7 +10,11 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
-  app.enableCors({ origin: '*', credentials: true });
+  app.enableCors({
+    origin: true,
+    credentials: true,
+    exposedHeaders: ['Content-Disposition', 'X-Filename'],
+  });
 
   const uploadsDir = join(process.cwd(), 'uploads');
   if (!fs.existsSync(uploadsDir)) {

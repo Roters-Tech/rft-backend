@@ -4,6 +4,7 @@ import { SettingsService } from '../settings/settings.service';
 import { SupabaseStorageService } from '../storage/supabase-storage.service';
 import { Role } from '@prisma/client';
 import { compressPdfBuffer } from './pdf-compressor.util';
+import { fetchGoogleDriveFile } from './google-drive.util';
 
 @Injectable()
 export class ContentService {
@@ -135,6 +136,41 @@ export class ContentService {
       failureCount: results.filter((r) => r.status === 'failed').length,
       results,
     };
+  }
+
+  async importFromGoogleDrive(body: any, user: { id: string; role: Role; schoolId?: string }) {
+    if (!body.url || typeof body.url !== 'string') {
+      throw new BadRequestException('Google Drive URL or File ID is required');
+    }
+
+    const fileInfo = await fetchGoogleDriveFile(body.url);
+    const compressedBuffer = await compressPdfBuffer(fileInfo.buffer);
+    const mockFile: Express.Multer.File = {
+      buffer: compressedBuffer,
+      originalname: fileInfo.filename,
+      mimetype: fileInfo.contentType || 'application/pdf',
+      size: compressedBuffer.length,
+      fieldname: 'file',
+      encoding: '7bit',
+      stream: null as any,
+      destination: '',
+      filename: fileInfo.filename,
+      path: '',
+    };
+
+    const title = body.title?.trim() || fileInfo.filename.replace(/\.[^/.]+$/, '');
+    const schoolId = user.schoolId || body.schoolId || null;
+
+    return this.create(
+      {
+        ...body,
+        title,
+        schoolId,
+      },
+      user.role,
+      user.id,
+      mockFile,
+    );
   }
 
   async update(id: string, body: any, user: { id: string; role: Role; schoolId?: string }, file?: Express.Multer.File) {

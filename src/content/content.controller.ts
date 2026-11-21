@@ -100,17 +100,27 @@ export class ContentController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.SCHOOL_ADMIN, Role.LECTURER)
+  @Post('admin/content/drive-import')
+  async driveImport(@Req() req: any, @Body() body: any) {
+    return this.contentService.importFromGoogleDrive(body, req.user);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN, Role.SCHOOL_ADMIN, Role.LECTURER)
   @Post('admin/content/drive-fetch')
-  async driveFetch(@Body('url') url: string, @Res() res: any) {
+  async driveFetch(@Req() req: any, @Body('url') url: string, @Res() res: any) {
     if (!url || typeof url !== 'string') {
       throw new BadRequestException('Google Drive URL or File ID is required');
     }
     const fileInfo = await fetchGoogleDriveFile(url);
 
+    const origin = req.headers?.origin || '*';
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Filename');
     res.setHeader('Content-Type', fileInfo.contentType || 'application/pdf');
     res.setHeader('Content-Length', fileInfo.size);
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileInfo.filename)}"`);
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Filename');
     res.setHeader('X-Filename', encodeURIComponent(fileInfo.filename));
     res.send(fileInfo.buffer);
   }
